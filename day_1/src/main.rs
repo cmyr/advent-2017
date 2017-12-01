@@ -1,5 +1,6 @@
-#![feature(test)]
+//! Advent of Code, day 1
 
+#![feature(test)]
 extern crate test;
 
 fn main() {
@@ -12,11 +13,13 @@ fn main() {
     println!("{}", p2_result);
 }
 
+/// Day 1, Exercise 1
+///
+/// Returns the sum of all digits in the series which are equal to
+/// the next digit in the series, wrapping around.
 fn sum_matching_next(series: &[char]) -> u32 {
 
-    if series.len() <= 1 {
-        return 0
-    }
+    if series.len() <= 1 { return 0 }
 
     let mut sum = 0;
     let mut peekable_series = series.iter().peekable();
@@ -24,6 +27,7 @@ fn sum_matching_next(series: &[char]) -> u32 {
     while let Some(i) = peekable_series.next() {
         sum += match peekable_series.peek() {
             Some(next) if next == &i => i.to_digit(10).unwrap(),
+            // None means end of series; check against first item
             None if Some(i) == series.first() => i.to_digit(10).unwrap(),
             _ => 0,
         };
@@ -31,15 +35,22 @@ fn sum_matching_next(series: &[char]) -> u32 {
     sum
 }
 
+/// Day 1, Exercise 2
+///
+/// Returns the sum of all digits in the series for which the digit
+/// at position i + n/2 is equal to the digit at posiition `i`, where
+/// `n` is the length of the series.
+///
+/// # Panics
+///
+/// This function will panic if the length of the input is non-even.
 fn sum_matching_opposite(series: &[char]) -> u32 {
-
-    if series.len() <= 1 {
-        return 0
-    }
+    assert!(series.len() % 2 == 0, "input series must be even length");
 
     let offset = series.len() / 2;
 
     series.iter().enumerate().fold(0, |sum, (idx, i)| {
+        // modulo to wrap around
         let opp_idx = (idx + offset) % series.len();
         sum + if &series[opp_idx] == i { i.to_digit(10).unwrap() } else { 0 }
     })
