@@ -7,6 +7,9 @@ fn main() {
     let input: Vec<char> = input.chars().collect();
     let result = sum_matching_next(&input);
     println!("{}", result);
+
+    let p2_result = sum_matching_opposite(&input);
+    println!("{}", p2_result);
 }
 
 fn sum_matching_next(series: &[char]) -> u32 {
@@ -28,6 +31,20 @@ fn sum_matching_next(series: &[char]) -> u32 {
     sum
 }
 
+fn sum_matching_opposite(series: &[char]) -> u32 {
+
+    if series.len() <= 1 {
+        return 0
+    }
+
+    let offset = series.len() / 2;
+
+    series.iter().enumerate().fold(0, |sum, (idx, i)| {
+        let opp_idx = (idx + offset) % series.len();
+        sum + if &series[opp_idx] == i { i.to_digit(10).unwrap() } else { 0 }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,6 +63,24 @@ mod tests {
 
         let inp = "1122".chars().collect::<Vec<_>>();
         assert_eq!(sum_matching_next(&inp), 3);
+    }
+
+    #[test]
+    fn test_part_two() {
+        let inp = "1212".chars().collect::<Vec<_>>();
+        assert_eq!(sum_matching_opposite(&inp), 6);
+
+        let inp = "1221".chars().collect::<Vec<_>>();
+        assert_eq!(sum_matching_opposite(&inp), 0);
+
+        let inp = "123425".chars().collect::<Vec<_>>();
+        assert_eq!(sum_matching_opposite(&inp), 4);
+
+        let inp = "123123".chars().collect::<Vec<_>>();
+        assert_eq!(sum_matching_opposite(&inp), 12);
+
+        let inp = "12131415".chars().collect::<Vec<_>>();
+        assert_eq!(sum_matching_opposite(&inp), 4);
     }
 
     #[bench]
