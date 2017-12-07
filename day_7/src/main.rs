@@ -147,12 +147,6 @@ fn find_imbalance(node: &Rc<RefCell<Node>>) -> Option<usize> {
     } else {
         None
     }
-    // for each child node:
-    // if that node's calc weight != siblings:
-    // if children's weights are equal:
-    // return node
-    // else:
-    // recurse
 }
 
 /// Prints the tree
