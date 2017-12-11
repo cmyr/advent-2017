@@ -13,3 +13,4 @@ Ongoing solutions to [AoC 2017](http://adventofcode.com/2017), in Rust.
 - [Day Eight](https://github.com/cmyr/advent-2017/blob/master/day_8/src/main.rs)
 - [Day Nine](https://github.com/cmyr/advent-2017/blob/master/day_9/src/main.rs)
 - [Day Ten](https://github.com/cmyr/advent-2017/blob/master/day_10/src/main.rs)
+- [Day Eleven](https://github.com/cmyr/advent-2017/blob/master/day_11/src/main.rs)
