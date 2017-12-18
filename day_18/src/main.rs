@@ -1,4 +1,19 @@
+extern crate crossbeam;
+
 use std::str::FromStr;
+use std::sync::{mpsc, atomic, Arc};
+use std::fmt::Error;
+
+static TEST_INPUT: &str = "set a 1
+add a 2
+mul a a
+mod a 5
+snd a
+set a 0
+rcv a
+jgz a -1
+set a 1
+jgz a -2";
 
 fn main() {
     let input = include_str!("../input.txt").trim()
@@ -6,8 +21,13 @@ fn main() {
         .map(|l| l.parse::<Op>().unwrap())
         .collect::<Vec<_>>();
 
+    //let input = TEST_INPUT.trim()
+        //.lines()
+        //.map(|l| l.parse::<Op>().unwrap())
+        //.collect::<Vec<_>>();
 
-    part_one(&input);
+
+    part_two(&input);
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,41 +49,63 @@ impl RunState {
 }
 
 struct ProgramState {
+    pid: usize,
     ops: Vec<Op>,
+    other_blocked: Arc<atomic::AtomicBool>,
+    self_blocked: Arc<atomic::AtomicBool>,
+    send_chan: mpsc::Sender<isize>,
+    recv_chan: mpsc::Receiver<isize>,
     registers: [isize; 16],
-    last_sound: Option<isize>,
+    send_count: usize,
     run_state: RunState,
 }
 
 impl ProgramState {
-    fn new(ops: &[Op]) -> Self {
-        ProgramState {
+    fn new(pid: usize, ops: &[Op],
+           other_blocked: Arc<atomic::AtomicBool>,
+           self_blocked: Arc<atomic::AtomicBool>,
+           send: mpsc::Sender<isize>,
+           recv: mpsc::Receiver<isize>) -> Self {
+
+        let mut state =  ProgramState {
+            pid: pid,
             ops: ops.to_owned(),
+            other_blocked: other_blocked,
+            self_blocked: self_blocked,
+            send_chan: send,
+            recv_chan: recv,
             registers: [0isize; 16],
-            last_sound: None,
+            send_count: 0,
             run_state: RunState::Continue(0),
-        }
+        };
+        state.registers[15] = pid as isize;
+        state
     }
 
-    fn run(&mut self) -> Result<isize, String> {
+    fn run(&mut self) -> Result<usize, String> {
         loop {
             let next_op = match self.run_state {
                 RunState::Continue(idx) if idx <= self.ops.len() => idx,
-                RunState::Halt => return Ok(self.last_sound.unwrap()),
+                RunState::Halt => return Ok(self.send_count),
                 RunState::Continue(idx) => return Err(format!("out of bounds: {}", idx)),
                 RunState::OutOfBounds(idx) => return Err(format!("out of bounds: {}", idx)),
             };
 
             let op = self.ops[next_op];
-            self.execute(&op);
+            if let Err(e) = self.execute(&op) {
+                eprintln!("proc {}, err {:}", self.pid, e);
+                return Err(e)
+            }
         }
     }
 
-    fn execute(&mut self, op: &Op) {
+    fn execute(&mut self, op: &Op) -> Result<(), String> {
         match op {
-            &Op::Sound(ref val) => {
-                let sound_val = self.get_value(val);
-                self.last_sound = Some(sound_val);
+            &Op::Send(ref val) => {
+                eprintln!("proc {} sending {:?}", self.pid, val);
+                let send_val = self.get_value(val);
+                self.send_count += 1;
+                self.send_chan.send(send_val).map_err(|e| format!("{:?}", e))?;
                 self.run_state.set_to_next();
             }
             &Op::Set(ref reg, ref val) => {
@@ -93,12 +135,31 @@ impl ProgramState {
                 self.set_reg(reg, cur_val % val);
                 self.run_state.set_to_next();
             }
-            &Op::Recover(ref val) => {
-                let cur_val = self.get_value(val);
-                if cur_val != 0 {
-                    self.run_state = RunState::Halt;
+            &Op::Receive(ref reg) => {
+                eprintln!("proc {} recving", self.pid);
+                let reg = reg.get_register().unwrap();
+                let result = if self.other_blocked.load(atomic::Ordering::SeqCst) {
+                    eprintln!("proc {} other blocked", self.pid);
+                    self.recv_chan.try_recv().map_err(|_|
+                      format!("proc {}: other blocked, recv fail", self.pid))
                 } else {
-                    self.run_state.set_to_next();
+                    self.self_blocked.store(true, atomic::Ordering::SeqCst);
+                    eprintln!("proc {} no block", self.pid);
+                    let result = self.recv_chan.recv().map_err(|_|
+                      format!("proc {}: no block, recv fail", self.pid));
+                    self.self_blocked.store(false, atomic::Ordering::SeqCst);
+                    result
+                };
+
+                match result {
+                    Ok(int) => {
+                        self.set_reg(reg, int);
+                        self.run_state.set_to_next();
+                    }
+                    Err(e) => {
+                        eprintln!("recv halt: {}", e);
+                        self.run_state = RunState::Halt;
+                    }
                 }
             }
             &Op::Jump(ref reg, ref val) => {
@@ -110,10 +171,8 @@ impl ProgramState {
                     self.run_state.set_to_next();
                 }
             }
-            _ => panic!(),
-
         }
-
+        Ok(())
     }
 
     fn set_reg(&mut self, reg: Register, value: isize) {
@@ -146,15 +205,28 @@ impl ProgramState {
     }
 }
 
-fn part_one(ops: &[Op]) {
-    let mut state = ProgramState::new(ops);
-    let result = state.run();
-    println!("part one: {:?}", result);
-    //let mut next_instruct = 0usize;
+fn part_two(ops: &[Op]) {
 
-    // we need to track when sounds are played;
-    // of our next position;
-    // and of the termination conditions
+    let ops = ops.to_owned();
+    crossbeam::scope(|scope| {
+
+        let (tx1, rx1) = mpsc::channel();
+        let (tx2, rx2) = mpsc::channel();
+        let t1_blocked = Arc::new(atomic::AtomicBool::new(false));
+        let t2_blocked = Arc::new(atomic::AtomicBool::new(false));
+        let bf1 = t1_blocked.clone();
+        let bf2 = t2_blocked.clone();
+
+        scope.spawn(|| {
+            let mut state1 = ProgramState::new(0, &ops, t1_blocked, bf2, tx1, rx2);
+            state1.run();
+        });
+        let r = scope.spawn(||{
+            let mut state2 = ProgramState::new(1, &ops, t2_blocked, bf1, tx2, rx1);
+            state2.run()
+        }).join();
+        println!("p2: {:?}", r);
+    })
 }
 
 type Register = char;
@@ -167,12 +239,12 @@ enum Value {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Op {
-    Sound(Value),
+    Send(Value),
     Set(Value, Value),
     Add(Value, Value),
     Mul(Value, Value),
     Mod(Value, Value),
-    Recover(Value),
+    Receive(Value),
     Jump(Value, Value),
 }
 
@@ -205,12 +277,12 @@ impl FromStr for Op {
         let reg = s_iter.next().unwrap().parse::<Value>().unwrap();
         let val = s_iter.next().map(|n| n.parse::<Value>().unwrap());
         match op_name {
-            "snd" => Ok(Op::Sound(reg)),
+            "snd" => Ok(Op::Send(reg)),
             "set" => Ok(Op::Set(reg, val.unwrap())),
             "add" => Ok(Op::Add(reg, val.unwrap())),
             "mul" => Ok(Op::Mul(reg, val.unwrap())),
             "mod" => Ok(Op::Mod(reg, val.unwrap())),
-            "rcv" => Ok(Op::Recover(reg)),
+            "rcv" => Ok(Op::Receive(reg)),
             "jgz" => Ok(Op::Jump(reg, val.unwrap())),
             other => panic!("illegal instruction name '{}'", other),
         }
