@@ -4,28 +4,11 @@ use std::str::FromStr;
 use std::sync::{mpsc, atomic, Arc};
 use std::fmt::Error;
 
-static TEST_INPUT: &str = "set a 1
-add a 2
-mul a a
-mod a 5
-snd a
-set a 0
-rcv a
-jgz a -1
-set a 1
-jgz a -2";
-
 fn main() {
     let input = include_str!("../input.txt").trim()
         .lines()
         .map(|l| l.parse::<Op>().unwrap())
         .collect::<Vec<_>>();
-
-    //let input = TEST_INPUT.trim()
-        //.lines()
-        //.map(|l| l.parse::<Op>().unwrap())
-        //.collect::<Vec<_>>();
-
 
     part_two(&input);
 }
@@ -94,7 +77,7 @@ impl ProgramState {
             let op = self.ops[next_op];
             if let Err(e) = self.execute(&op) {
                 eprintln!("proc {}, err {:}", self.pid, e);
-                return Err(e)
+                return Ok(self.send_count)
             }
         }
     }
@@ -102,7 +85,6 @@ impl ProgramState {
     fn execute(&mut self, op: &Op) -> Result<(), String> {
         match op {
             &Op::Send(ref val) => {
-                eprintln!("proc {} sending {:?}", self.pid, val);
                 let send_val = self.get_value(val);
                 self.send_count += 1;
                 self.send_chan.send(send_val).map_err(|e| format!("{:?}", e))?;
@@ -136,19 +118,21 @@ impl ProgramState {
                 self.run_state.set_to_next();
             }
             &Op::Receive(ref reg) => {
-                eprintln!("proc {} recving", self.pid);
                 let reg = reg.get_register().unwrap();
-                let result = if self.other_blocked.load(atomic::Ordering::SeqCst) {
-                    eprintln!("proc {} other blocked", self.pid);
-                    self.recv_chan.try_recv().map_err(|_|
-                      format!("proc {}: other blocked, recv fail", self.pid))
-                } else {
-                    self.self_blocked.store(true, atomic::Ordering::SeqCst);
-                    eprintln!("proc {} no block", self.pid);
-                    let result = self.recv_chan.recv().map_err(|_|
-                      format!("proc {}: no block, recv fail", self.pid));
-                    self.self_blocked.store(false, atomic::Ordering::SeqCst);
-                    result
+                let result = match self.recv_chan.try_recv() {
+                    Ok(int) => Ok(int),
+                    Err(_) => {
+                        self.self_blocked.store(true, atomic::Ordering::SeqCst);
+                        let result = if self.other_blocked.load(atomic::Ordering::SeqCst) {
+                            self.recv_chan.try_recv().map_err(|_|
+                                  format!("proc {}: other blocked, recv fail", self.pid))
+                        } else {
+                            self.recv_chan.recv().map_err(|_|
+                               format!("proc {}: no block, recv fail", self.pid))
+                        };
+                        self.self_blocked.store(false, atomic::Ordering::SeqCst);
+                        result
+                    }
                 };
 
                 match result {
@@ -157,7 +141,7 @@ impl ProgramState {
                         self.run_state.set_to_next();
                     }
                     Err(e) => {
-                        eprintln!("recv halt: {}", e);
+                        eprintln!("proc {} END ERR {}", self.pid, e);
                         self.run_state = RunState::Halt;
                     }
                 }
