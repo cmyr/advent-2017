@@ -22,3 +22,4 @@ Ongoing solutions to [AoC 2017](http://adventofcode.com/2017), in Rust.
 - [Day Seventeen](https://github.com/cmyr/advent-2017/blob/master/day_17/src/main.rs)
 - [Day Eighteen](https://github.com/cmyr/advent-2017/blob/master/day_18/src/main.rs)
 - [Day Nineteen](https://github.com/cmyr/advent-2017/blob/master/day_19/src/main.rs)
+- [Day Twenty](https://github.com/cmyr/advent-2017/blob/master/day_20/src/main.rs)
